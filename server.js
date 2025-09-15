@@ -36,7 +36,7 @@ console.log("✅ Loaded Trading Accounts:", tradingAccounts);
 async function refreshAccessToken() {
     try {
         console.log('🔄 Attempting to refresh access token...');
-        const response = await axios.post('https://openapi.spotware.com/connect/token', null, {
+        const response = await axios.post('https://api.ctrader.com/connect/token', null, {
             params: {
                 grant_type: 'refresh_token',
                 refresh_token: ctraderRefreshToken,
@@ -104,7 +104,7 @@ app.get('/test-ctrader', async (req, res) => {
         console.log('🔍 Testing cTrader API connectivity...');
         const accNum = tradingAccounts[0].accountNumber;
         const response = await axios.get(
-            `https://openapi.spotware.com/connect/trading/v1/accounts/${accNum}/symbols`,
+            `https://api.ctrader.com/connect/trading/v1/accounts/${accNum}/symbols`,
             { headers: { Authorization: `Bearer ${ctraderAccessToken}` } }
         );
         console.log('✅ Successfully fetched symbols:', response.data?.symbols?.slice(0, 5));
