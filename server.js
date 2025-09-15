@@ -1,8 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const app = express();
+require('dotenv').config();
 
+const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
@@ -17,76 +18,38 @@ let activeAccount = '';
 let symbols = [];
 let fullMargin = false;
 
-// ------------------- Read Environment Variables -------------------
-const CTRADER_CLIENT_ID = process.env.CTRADER_CLIENT_ID;
-const CTRADER_CLIENT_SECRET = process.env.CTRADER_CLIENT_SECRET;
-let ctraderAccessToken = process.env.CTRADER_ACCESS_TOKEN;
-const CTRADER_REFRESH_TOKEN = process.env.CTRADER_REFRESH_TOKEN;
-const CTRADER_SERVER = process.env.CTRADER_SERVER;
-const CTRADER_PASSWORD = process.env.CTRADER_PASSWORD;
+// ------------------- Load Environment Variables -------------------
+const ctraderClientId = process.env.CTRADER_CLIENT_ID;
+const ctraderClientSecret = process.env.CTRADER_CLIENT_SECRET;
+const ctraderRefreshToken = process.env.CTRADER_REFRESH_TOKEN;
+let ctraderAccessToken = process.env.CTRADER_ACCESS_TOKEN || '';
 
-// ✅ Collect all trading accounts dynamically
-const tradingAccounts = Object.keys(process.env)
-  .filter((key) => key.startsWith('MO_TRADER_'))
-  .map((key) => ({
-    name: key,
-    accountNumber: process.env[key]
-  }));
+const tradingAccounts = [
+    {
+        name: "MO_TRADER_MAIN",
+        accountNumber: process.env.MO_TRADER_MAIN
+    }
+];
+console.log("✅ Loaded Trading Accounts:", tradingAccounts);
 
-console.log('✅ Loaded Trading Accounts:', tradingAccounts);
-
-// ------------------- Refresh Token Logic -------------------
+// ------------------- Helper: Refresh Access Token -------------------
 async function refreshAccessToken() {
     try {
         console.log('🔄 Attempting to refresh access token...');
-        const response = await axios.post(
-            'https://openapi.spotware.com/connect/token',
-            new URLSearchParams({
+        const response = await axios.post('https://openapi.spotware.com/connect/token', null, {
+            params: {
                 grant_type: 'refresh_token',
-                refresh_token: CTRADER_REFRESH_TOKEN,
-                client_id: CTRADER_CLIENT_ID,
-                client_secret: CTRADER_CLIENT_SECRET
-            })
-        );
-
+                refresh_token: ctraderRefreshToken,
+                client_id: ctraderClientId,
+                client_secret: ctraderClientSecret
+            }
+        });
         ctraderAccessToken = response.data.access_token;
         console.log('✅ Access token refreshed successfully!');
         return true;
     } catch (err) {
-        console.error('❌ Failed to refresh access token:', err.response?.data || err.message);
+        console.error('❌ Failed to refresh token:', err.response?.data || err.message);
         return false;
-    }
-}
-
-// ------------------- cTrader Trade Function -------------------
-async function openCtraderTrade(symbol, volume = 1000, type = 'BUY') {
-    for (let acc of tradingAccounts) {
-        try {
-            const response = await axios.post(
-                `https://openapi.spotware.com/connect/trading/v1/accounts/${acc.accountNumber}/orders`,
-                {
-                    symbolId: symbol,      // This must be a numeric symbol ID
-                    orderType: 'MARKET',
-                    tradeSide: type,       // BUY or SELL
-                    volume: volume         // cTrader volume in units (e.g. 100000 = 1 lot for FX)
-                },
-                { headers: { Authorization: `Bearer ${ctraderAccessToken}` } }
-            );
-            console.log(`✅ Trade opened for ${symbol} on account ${acc.accountNumber}`, response.data);
-        } catch (err) {
-            if (err.response?.status === 401) {
-                console.log('⚠️ Access token expired, refreshing...');
-                const refreshed = await refreshAccessToken();
-                if (refreshed) {
-                    console.log('🔁 Retrying trade after token refresh...');
-                    return openCtraderTrade(symbol, volume, type);
-                } else {
-                    console.error('❌ Could not refresh token, skipping trade.');
-                }
-            } else {
-                console.error(`❌ Trade error for ${acc.accountNumber}:`, err.response?.data || err.message);
-            }
-        }
     }
 }
 
@@ -94,28 +57,14 @@ async function openCtraderTrade(symbol, volume = 1000, type = 'BUY') {
 
 // GET /status
 app.get('/status', (req, res) => {
-    res.json({
-        botStatus,
-        dailyPL,
-        activeTrades,
-        winRate,
-        breakLevel,
-        tradingAccounts: tradingAccounts.map(a => a.accountNumber)
-    });
+    res.json({ botStatus, dailyPL, activeTrades, winRate, breakLevel });
 });
 
 // POST /start
-app.post('/start', async (req, res) => {
+app.post('/start', (req, res) => {
     botStatus = true;
     console.log('🚀 Bot started');
-    if (symbols.length > 0) {
-        for (let symbol of symbols) {
-            await openCtraderTrade(symbol, 1000, 'BUY');
-        }
-    } else {
-        console.log('⚠️ No symbols selected. No trades opened.');
-    }
-    res.json({ success: true, tradingAccounts });
+    res.json({ success: true });
 });
 
 // POST /stop
@@ -130,7 +79,7 @@ app.post('/account_config', (req, res) => {
     const { accounts: accs, activeAccount: active } = req.body;
     if (accs) accounts = accs;
     if (active) activeAccount = active;
-    console.log('📊 Account config updated:', accounts, activeAccount);
+    console.log('✅ Account config updated:', accounts, activeAccount);
     res.json({ success: true });
 });
 
@@ -138,15 +87,40 @@ app.post('/account_config', (req, res) => {
 app.post('/set_symbols', (req, res) => {
     const { symbols: newSymbols } = req.body;
     if (newSymbols) symbols = newSymbols;
-    console.log('📈 Symbols updated:', symbols);
+    console.log('✅ Symbols updated:', symbols);
     res.json({ success: true });
 });
 
 // POST /full_margin
 app.post('/full_margin', (req, res) => {
     fullMargin = !fullMargin;
-    console.log('💥 Full margin mode:', fullMargin);
+    console.log('⚡ Full margin mode:', fullMargin);
     res.json({ success: true, fullMargin });
+});
+
+// ------------------- Diagnostic Route -------------------
+app.get('/test-ctrader', async (req, res) => {
+    try {
+        console.log('🔍 Testing cTrader API connectivity...');
+        const accNum = tradingAccounts[0].accountNumber;
+        const response = await axios.get(
+            `https://openapi.spotware.com/connect/trading/v1/accounts/${accNum}/symbols`,
+            { headers: { Authorization: `Bearer ${ctraderAccessToken}` } }
+        );
+        console.log('✅ Successfully fetched symbols:', response.data?.symbols?.slice(0, 5));
+        res.json({ success: true, sampleSymbols: response.data.symbols.slice(0, 5) });
+    } catch (err) {
+        if (err.response?.status === 401) {
+            console.log('⚠️ Token expired — refreshing...');
+            const refreshed = await refreshAccessToken();
+            if (refreshed) {
+                console.log('🔁 Retrying symbol fetch with new token...');
+                return res.redirect('/test-ctrader');
+            }
+        }
+        console.error('❌ Failed to connect to cTrader:', err.response?.data || err.message);
+        res.status(500).json({ success: false, error: err.response?.data || err.message });
+    }
 });
 
 // ------------------- Dynamic Simulation -------------------
