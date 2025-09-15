@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios'); // for cTrader REST API calls
+const axios = require('axios'); // for cTrader API requests
 const app = express();
 
 app.use(cors({ origin: '*' }));
@@ -22,17 +22,16 @@ const CTRADER_CLIENT_ID = process.env.CTRADER_CLIENT_ID;
 const CTRADER_CLIENT_SECRET = process.env.CTRADER_CLIENT_SECRET;
 let ctraderAccessToken = process.env.CTRADER_ACCESS_TOKEN;
 const CTRADER_REFRESH_TOKEN = process.env.CTRADER_REFRESH_TOKEN;
-const CTRADER_ACCOUNT_NUMBER = process.env.CTRADER_ACCOUNT_NUMBER;
+const MO_TRADER_MAIN = process.env.MO_TRADER_MAIN; // ✅ account number
 const CTRADER_SERVER = process.env.CTRADER_SERVER;
 const CTRADER_PASSWORD = process.env.CTRADER_PASSWORD;
 
-// ------------------- Initialize cTrader Client -------------------
-// This is pseudo-code; replace with your cTrader API methods if using a library
+// ------------------- cTrader Trade Function -------------------
 async function openCtraderTrade(symbol, volume = 1, type = 'Buy') {
     try {
-        // Example REST API call structure
+        // Example API call — replace URL with real endpoint if using cTrader Open API
         const response = await axios.post(
-            `https://openapi.spotware.com/ctrader/v1/accounts/${CTRADER_ACCOUNT_NUMBER}/trades`,
+            `https://openapi.spotware.com/ctrader/v1/accounts/${MO_TRADER_MAIN}/trades`,
             {
                 symbol,
                 volume,
@@ -44,13 +43,12 @@ async function openCtraderTrade(symbol, volume = 1, type = 'Buy') {
                 }
             }
         );
-        console.log(`Trade opened for ${symbol}:`, response.data);
+        console.log(`✅ Trade opened for ${symbol} on account ${MO_TRADER_MAIN}`);
+        return response.data;
     } catch (err) {
-        console.error(`Error opening trade for ${symbol}:`, err.message);
+        console.error(`❌ Error opening trade for ${symbol}:`, err.message);
     }
 }
-
-// Optional: implement token refresh logic here if needed
 
 // ------------------- Routes -------------------
 
@@ -68,12 +66,14 @@ app.get('/status', (req, res) => {
 // POST /start
 app.post('/start', async (req, res) => {
     botStatus = true;
-    console.log('Bot started');
+    console.log('🚀 Bot started');
 
     if (symbols.length > 0) {
         for (let symbol of symbols) {
-            await openCtraderTrade(symbol, 1, 'Buy'); // adjust type/volume as needed
+            await openCtraderTrade(symbol, 1, 'Buy'); // You can change order type or volume here
         }
+    } else {
+        console.log('⚠️ No symbols selected. No trades opened.');
     }
 
     res.json({ success: true });
@@ -82,7 +82,7 @@ app.post('/start', async (req, res) => {
 // POST /stop
 app.post('/stop', (req, res) => {
     botStatus = false;
-    console.log('Bot stopped');
+    console.log('🛑 Bot stopped');
     res.json({ success: true });
 });
 
@@ -91,7 +91,7 @@ app.post('/account_config', (req, res) => {
     const { accounts: accs, activeAccount: active } = req.body;
     if (accs) accounts = accs;
     if (active) activeAccount = active;
-    console.log('Account config updated:', accounts, activeAccount);
+    console.log('📊 Account config updated:', accounts, activeAccount);
     res.json({ success: true });
 });
 
@@ -99,14 +99,14 @@ app.post('/account_config', (req, res) => {
 app.post('/set_symbols', (req, res) => {
     const { symbols: newSymbols } = req.body;
     if (newSymbols) symbols = newSymbols;
-    console.log('Symbols updated:', symbols);
+    console.log('📈 Symbols updated:', symbols);
     res.json({ success: true });
 });
 
 // POST /full_margin
 app.post('/full_margin', (req, res) => {
     fullMargin = !fullMargin;
-    console.log('Full margin mode:', fullMargin);
+    console.log('💥 Full margin mode:', fullMargin);
     res.json({ success: true, fullMargin });
 });
 
@@ -123,5 +123,5 @@ setInterval(() => {
 // ------------------- Start Server -------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Backend server running on port ${PORT}`);
+    console.log(`✅ Backend server running on port ${PORT}`);
 });
