@@ -1,8 +1,9 @@
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios'); // for cTrader REST API calls
 const app = express();
 
-app.use(cors({ origin: '*' })); // allow all domains to connect
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // ------------------- In-Memory State -------------------
@@ -15,6 +16,41 @@ let accounts = [];
 let activeAccount = '';
 let symbols = [];
 let fullMargin = false;
+
+// ------------------- Read Environment Variables -------------------
+const CTRADER_CLIENT_ID = process.env.CTRADER_CLIENT_ID;
+const CTRADER_CLIENT_SECRET = process.env.CTRADER_CLIENT_SECRET;
+let ctraderAccessToken = process.env.CTRADER_ACCESS_TOKEN;
+const CTRADER_REFRESH_TOKEN = process.env.CTRADER_REFRESH_TOKEN;
+const CTRADER_ACCOUNT_NUMBER = process.env.CTRADER_ACCOUNT_NUMBER;
+const CTRADER_SERVER = process.env.CTRADER_SERVER;
+const CTRADER_PASSWORD = process.env.CTRADER_PASSWORD;
+
+// ------------------- Initialize cTrader Client -------------------
+// This is pseudo-code; replace with your cTrader API methods if using a library
+async function openCtraderTrade(symbol, volume = 1, type = 'Buy') {
+    try {
+        // Example REST API call structure
+        const response = await axios.post(
+            `https://openapi.spotware.com/ctrader/v1/accounts/${CTRADER_ACCOUNT_NUMBER}/trades`,
+            {
+                symbol,
+                volume,
+                type
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${ctraderAccessToken}`
+                }
+            }
+        );
+        console.log(`Trade opened for ${symbol}:`, response.data);
+    } catch (err) {
+        console.error(`Error opening trade for ${symbol}:`, err.message);
+    }
+}
+
+// Optional: implement token refresh logic here if needed
 
 // ------------------- Routes -------------------
 
@@ -30,9 +66,16 @@ app.get('/status', (req, res) => {
 });
 
 // POST /start
-app.post('/start', (req, res) => {
+app.post('/start', async (req, res) => {
     botStatus = true;
     console.log('Bot started');
+
+    if (symbols.length > 0) {
+        for (let symbol of symbols) {
+            await openCtraderTrade(symbol, 1, 'Buy'); // adjust type/volume as needed
+        }
+    }
+
     res.json({ success: true });
 });
 
@@ -68,7 +111,6 @@ app.post('/full_margin', (req, res) => {
 });
 
 // ------------------- Dynamic Simulation -------------------
-// Optional: simulate stats for demo
 setInterval(() => {
     if (botStatus) {
         dailyPL += parseFloat((Math.random() * 10 - 5).toFixed(2));
