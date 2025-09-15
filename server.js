@@ -1,128 +1,85 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+app.use(cors({ origin: '*' })); // allow all domains to connect
 app.use(express.json());
 
-// Ensure config directory exists
-const configDir = path.join(__dirname, 'config');
-if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true });
-}
+// ------------------- In-Memory State -------------------
+let botStatus = false;
+let dailyPL = 0;
+let activeTrades = 0;
+let winRate = 0;
+let breakLevel = 0;
+let accounts = [];
+let activeAccount = '';
+let symbols = [];
+let fullMargin = false;
 
-// Routes
+// ------------------- Routes -------------------
+
+// GET /status
 app.get('/status', (req, res) => {
     res.json({
-        botStatus: 'on',
-        symbols: ['EURUSD', 'DE30'],
-        statistics: {
-            dailyPL: '125.50',
-            activeTrades: 2,
-            winRate: 65,
-            breakLevel: 35
-        }
+        botStatus,
+        dailyPL,
+        activeTrades,
+        winRate,
+        breakLevel
     });
 });
 
-// Save account configuration
+// POST /start
+app.post('/start', (req, res) => {
+    botStatus = true;
+    console.log('Bot started');
+    res.json({ success: true });
+});
+
+// POST /stop
+app.post('/stop', (req, res) => {
+    botStatus = false;
+    console.log('Bot stopped');
+    res.json({ success: true });
+});
+
+// POST /account_config
 app.post('/account_config', (req, res) => {
-    try {
-        console.log('Saving account config:', req.body);
-        
-        fs.writeFileSync(
-            path.join(configDir, 'accounts.json'),
-            JSON.stringify(req.body, null, 2)
-        );
-        
-        res.json({ status: 'success', message: 'Account configuration saved' });
-    } catch (error) {
-        console.error('Save error:', error);
-        res.status(500).json({ 
-            status: 'error', 
-            message: 'Failed to save account configuration: ' + error.message 
-        });
-    }
+    const { accounts: accs, activeAccount: active } = req.body;
+    if (accs) accounts = accs;
+    if (active) activeAccount = active;
+    console.log('Account config updated:', accounts, activeAccount);
+    res.json({ success: true });
 });
 
-// Get account configuration
-app.get('/account_config', (req, res) => {
-    try {
-        const configPath = path.join(configDir, 'accounts.json');
-        if (fs.existsSync(configPath)) {
-            const data = fs.readFileSync(configPath, 'utf8');
-            res.json(JSON.parse(data));
-        } else {
-            res.json({ accounts: [], activeAccount: '' });
-        }
-    } catch (error) {
-        console.error('Load error:', error);
-        res.status(500).json({ 
-            status: 'error', 
-            message: 'Failed to load account configuration' 
-        });
-    }
-});
-
-// Save MQL5 settings
-app.post('/mql_settings', (req, res) => {
-    try {
-        console.log('Saving MQL5 settings:', req.body);
-        
-        fs.writeFileSync(
-            path.join(configDir, 'mql_settings.json'),
-            JSON.stringify(req.body, null, 2)
-        );
-        
-        res.json({ status: 'success', message: 'MQL5 settings saved' });
-    } catch (error) {
-        console.error('Save error:', error);
-        res.status(500).json({ 
-            status: 'error', 
-            message: 'Failed to save MQL5 settings: ' + error.message 
-        });
-    }
-});
-
-// Set symbols
+// POST /set_symbols
 app.post('/set_symbols', (req, res) => {
-    try {
-        console.log('Setting symbols:', req.body);
-        
-        fs.writeFileSync(
-            path.join(configDir, 'symbols.json'),
-            JSON.stringify(req.body, null, 2)
-        );
-        
-        res.json({ status: 'success', symbols: req.body.symbols });
-    } catch (error) {
-        console.error('Save error:', error);
-        res.status(500).json({ 
-            status: 'error', 
-            message: 'Failed to set symbols' 
-        });
-    }
+    const { symbols: newSymbols } = req.body;
+    if (newSymbols) symbols = newSymbols;
+    console.log('Symbols updated:', symbols);
+    res.json({ success: true });
 });
 
-// Full margin mode
+// POST /full_margin
 app.post('/full_margin', (req, res) => {
-    console.log('Full margin request:', req.body);
-    res.json({ status: 'success', message: 'Full margin mode enabled' });
+    fullMargin = !fullMargin;
+    console.log('Full margin mode:', fullMargin);
+    res.json({ success: true, fullMargin });
 });
 
-// Toggle bot
-app.post('/bot_toggle', (req, res) => {
-    console.log('Bot toggle request:', req.body);
-    res.json({ status: 'success', message: `Bot turned ${req.body.action}` });
-});
+// ------------------- Dynamic Simulation -------------------
+// Optional: simulate stats for demo
+setInterval(() => {
+    if (botStatus) {
+        dailyPL += parseFloat((Math.random() * 10 - 5).toFixed(2));
+        activeTrades = Math.floor(Math.random() * 5);
+        winRate = Math.floor(Math.random() * 100);
+        breakLevel = Math.floor(Math.random() * 100);
+    }
+}, 5000);
 
-// Start server
+// ------------------- Start Server -------------------
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`M.O Cash Bot backend running on port ${PORT}`);
-    console.log(`Config directory: ${configDir}`);
+    console.log(`Backend server running on port ${PORT}`);
 });
