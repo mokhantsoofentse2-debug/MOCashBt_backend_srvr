@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios'); // for cTrader API requests
+const axios = require('axios');
 const app = express();
 
 app.use(cors({ origin: '*' }));
@@ -22,31 +22,32 @@ const CTRADER_CLIENT_ID = process.env.CTRADER_CLIENT_ID;
 const CTRADER_CLIENT_SECRET = process.env.CTRADER_CLIENT_SECRET;
 let ctraderAccessToken = process.env.CTRADER_ACCESS_TOKEN;
 const CTRADER_REFRESH_TOKEN = process.env.CTRADER_REFRESH_TOKEN;
-const MO_TRADER_MAIN = process.env.MO_TRADER_MAIN; // ✅ account number
 const CTRADER_SERVER = process.env.CTRADER_SERVER;
 const CTRADER_PASSWORD = process.env.CTRADER_PASSWORD;
 
+// ✅ Collect all trading accounts dynamically
+const tradingAccounts = Object.keys(process.env)
+  .filter((key) => key.startsWith('MO_TRADER_'))
+  .map((key) => ({
+    name: key,
+    accountNumber: process.env[key]
+  }));
+
+console.log('✅ Loaded Trading Accounts:', tradingAccounts);
+
 // ------------------- cTrader Trade Function -------------------
 async function openCtraderTrade(symbol, volume = 1, type = 'Buy') {
-    try {
-        // Example API call — replace URL with real endpoint if using cTrader Open API
-        const response = await axios.post(
-            `https://openapi.spotware.com/ctrader/v1/accounts/${MO_TRADER_MAIN}/trades`,
-            {
-                symbol,
-                volume,
-                type
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${ctraderAccessToken}`
-                }
-            }
-        );
-        console.log(`✅ Trade opened for ${symbol} on account ${MO_TRADER_MAIN}`);
-        return response.data;
-    } catch (err) {
-        console.error(`❌ Error opening trade for ${symbol}:`, err.message);
+    for (let acc of tradingAccounts) {
+        try {
+            const response = await axios.post(
+                `https://openapi.spotware.com/ctrader/v1/accounts/${acc.accountNumber}/trades`,
+                { symbol, volume, type },
+                { headers: { Authorization: `Bearer ${ctraderAccessToken}` } }
+            );
+            console.log(`✅ Trade opened for ${symbol} on account ${acc.accountNumber}`);
+        } catch (err) {
+            console.error(`❌ Error opening trade for ${symbol} on account ${acc.accountNumber}:`, err.message);
+        }
     }
 }
 
@@ -59,7 +60,8 @@ app.get('/status', (req, res) => {
         dailyPL,
         activeTrades,
         winRate,
-        breakLevel
+        breakLevel,
+        tradingAccounts: tradingAccounts.map(a => a.accountNumber)
     });
 });
 
@@ -70,13 +72,13 @@ app.post('/start', async (req, res) => {
 
     if (symbols.length > 0) {
         for (let symbol of symbols) {
-            await openCtraderTrade(symbol, 1, 'Buy'); // You can change order type or volume here
+            await openCtraderTrade(symbol, 1, 'Buy'); // adjust volume/type if needed
         }
     } else {
         console.log('⚠️ No symbols selected. No trades opened.');
     }
 
-    res.json({ success: true });
+    res.json({ success: true, tradingAccounts });
 });
 
 // POST /stop
