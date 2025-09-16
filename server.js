@@ -14,7 +14,6 @@ let activeTrades = 0;
 let winRate = 0;
 let breakLevel = 0;
 let accounts = [];
-let activeAccount = '';
 let symbols = [];
 let fullMargin = false;
 
@@ -24,6 +23,10 @@ const refreshToken = process.env.CTRADER_REFRESH_TOKEN;
 const clientId = process.env.CTRADER_CLIENT_ID;
 const clientSecret = process.env.CTRADER_CLIENT_SECRET;
 
+// Read your active account number from the environment variable
+let activeAccount = process.env.MO_TRADER_MAIN;
+
+// ------------------- Functions -------------------
 async function refreshAccessToken() {
     if (!refreshToken || !clientId || !clientSecret) {
         console.error("❌ Missing refresh token or client credentials in environment variables.");
@@ -58,7 +61,6 @@ async function refreshAccessToken() {
     }
 }
 
-// ------------------- Utility: Place Trade -------------------
 async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
     if (!accessToken) {
         console.error("❌ No access token available, attempting refresh...");
@@ -116,11 +118,13 @@ app.post('/start', async (req, res) => {
     console.log('🤖 Bot started');
 
     if (activeAccount && symbols.length > 0) {
-        const account = accounts.find(acc => acc.name === activeAccount);
+        // Match by account number instead of name
+        const account = accounts.find(acc => acc.accountNumber === activeAccount);
         if (account) {
             await placeTrade(account, symbols[0]);
         } else {
-            console.log("⚠️ No matching account found for activeAccount:", activeAccount);
+            console.log("⚠️ No matching account found for activeAccount number:", activeAccount);
+            console.log("📄 Current accounts:", accounts);
         }
     }
 
@@ -134,10 +138,9 @@ app.post('/stop', (req, res) => {
 });
 
 app.post('/account_config', (req, res) => {
-    const { accounts: accs, activeAccount: active } = req.body;
+    const { accounts: accs } = req.body;
     if (accs) accounts = accs;
-    if (active) activeAccount = active;
-    console.log('✅ Active account set to:', activeAccount);
+    console.log('📄 Accounts updated:', accounts);
     res.json({ success: true });
 });
 
