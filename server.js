@@ -13,7 +13,6 @@ let dailyPL = 0;
 let activeTrades = 0;
 let winRate = 0;
 let breakLevel = 0;
-let accounts = [];
 let symbols = [];
 let fullMargin = false;
 
@@ -23,8 +22,14 @@ const refreshToken = process.env.CTRADER_REFRESH_TOKEN;
 const clientId = process.env.CTRADER_CLIENT_ID;
 const clientSecret = process.env.CTRADER_CLIENT_SECRET;
 
-// Read your active account number from the environment variable
-let activeAccount = process.env.MO_TRADER_MAIN;
+// ------------------- Account Setup from Environment -------------------
+let activeAccount = process.env.MO_TRADER_MAIN; // your account number
+let accounts = [
+    {
+        accountNumber: activeAccount,
+        type: "REAL" // optional
+    }
+];
 
 // ------------------- Functions -------------------
 async function refreshAccessToken() {
@@ -118,7 +123,6 @@ app.post('/start', async (req, res) => {
     console.log('🤖 Bot started');
 
     if (activeAccount && symbols.length > 0) {
-        // Match by account number instead of name
         const account = accounts.find(acc => acc.accountNumber === activeAccount);
         if (account) {
             await placeTrade(account, symbols[0]);
@@ -134,13 +138,6 @@ app.post('/start', async (req, res) => {
 app.post('/stop', (req, res) => {
     botStatus = false;
     console.log('🛑 Bot stopped');
-    res.json({ success: true });
-});
-
-app.post('/account_config', (req, res) => {
-    const { accounts: accs } = req.body;
-    if (accs) accounts = accs;
-    console.log('📄 Accounts updated:', accounts);
     res.json({ success: true });
 });
 
