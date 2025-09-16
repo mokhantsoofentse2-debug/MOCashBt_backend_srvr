@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const fetch = require('node-fetch');
+const dns = require('dns').promises;
 
 const app = express();
 
@@ -13,6 +14,8 @@ let dailyPL = 0;
 let activeTrades = 0;
 let winRate = 0;
 let breakLevel = 0;
+let accounts = [];
+let activeAccount = '';
 let symbols = [];
 let fullMargin = false;
 
@@ -22,24 +25,22 @@ const refreshToken = process.env.CTRADER_REFRESH_TOKEN;
 const clientId = process.env.CTRADER_CLIENT_ID;
 const clientSecret = process.env.CTRADER_CLIENT_SECRET;
 
-// ------------------- Account Setup -------------------
-let activeAccount = process.env.MO_TRADER_MAIN;
-let accounts = [
-    {
-        accountNumber: activeAccount,
-        type: "REAL"
+// Cache IP to avoid resolving on every request
+let cachedIP = null;
+
+async function resolveSpotwareIP() {
+    try {
+        if (cachedIP) return cachedIP; // use cached value
+        const res = await dns.lookup("openapi.spotware.com");
+        cachedIP = res.address;
+        console.log(`🌐 Resolved openapi.spotware.com to ${cachedIP}`);
+        return cachedIP;
+    } catch (err) {
+        console.error("❌ Failed to resolve openapi.spotware.com:", err.message);
+        return null;
     }
-];
+}
 
-// ------------------- API Endpoint Setup -------------------
-const USE_DEMO_API = process.env.USE_DEMO_API === 'true'; // set to "true" in Render if using demo
-const CTRADER_API_URL = USE_DEMO_API
-    ? 'https://openapi-demo.spotware.com/connect/trading'
-    : 'https://openapi.spotware.com/connect/trading';
-
-console.log(`🌐 Using cTrader API URL: ${CTRADER_API_URL}`);
-
-// ------------------- Functions -------------------
 async function refreshAccessToken() {
     if (!refreshToken || !clientId || !clientSecret) {
         console.error("❌ Missing refresh token or client credentials in environment variables.");
@@ -74,6 +75,7 @@ async function refreshAccessToken() {
     }
 }
 
+// ------------------- Utility: Place Trade -------------------
 async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
     if (!accessToken) {
         console.error("❌ No access token available, attempting refresh...");
@@ -92,9 +94,16 @@ async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
     console.log("📤 Trade Payload:", JSON.stringify(payload, null, 2));
 
     try {
-        const response = await fetch(CTRADER_API_URL, {
+        const ip = await resolveSpotwareIP();
+        if (!ip) {
+            console.error("❌ Could not resolve IP, skipping trade.");
+            return;
+        }
+
+        const response = await fetch(`https://${ip}/connect/trading`, {
             method: 'POST',
             headers: {
+                'Host': 'openapi.spotware.com', // SNI / virtual host header
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json'
             },
@@ -107,7 +116,7 @@ async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
             console.log("🔄 Token expired, refreshing and retrying trade...");
             const refreshed = await refreshAccessToken();
             if (refreshed) {
-                return placeTrade(account, symbol, volume, side);
+                return placeTrade(account, symbol, volume, side); // retry trade
             }
         }
 
@@ -117,8 +126,7 @@ async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
             console.log(`✅ Trade success for ${account.accountNumber}:`, data);
         }
     } catch (err) {
-        console.error(`❌ Trade error for ${account.accountNumber}: ${err.message}`);
-        console.error("⚠️ Possible network/DNS issue. Check if the server can resolve the cTrader API host.");
+        console.error(`❌ Trade error for ${account.accountNumber}:`, err.message);
     }
 }
 
@@ -132,15 +140,12 @@ app.post('/start', async (req, res) => {
     console.log('🤖 Bot started');
 
     if (activeAccount && symbols.length > 0) {
-        const account = accounts.find(acc => acc.accountNumber === activeAccount);
+        const account = accounts.find(acc => acc.name === activeAccount);
         if (account) {
             await placeTrade(account, symbols[0]);
         } else {
-            console.log("⚠️ No matching account found for activeAccount number:", activeAccount);
-            console.log("📄 Current accounts:", accounts);
+            console.log("⚠️ No matching account found for activeAccount:", activeAccount);
         }
-    } else if (!symbols.length) {
-        console.log("⚠️ No symbols set. Use /set_symbols before starting the bot.");
     }
 
     res.json({ success: true });
@@ -149,6 +154,14 @@ app.post('/start', async (req, res) => {
 app.post('/stop', (req, res) => {
     botStatus = false;
     console.log('🛑 Bot stopped');
+    res.json({ success: true });
+});
+
+app.post('/account_config', (req, res) => {
+    const { accounts: accs, activeAccount: active } = req.body;
+    if (accs) accounts = accs;
+    if (active) activeAccount = active;
+    console.log('✅ Active account set to:', activeAccount);
     res.json({ success: true });
 });
 
