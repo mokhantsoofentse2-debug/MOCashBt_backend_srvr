@@ -84,7 +84,7 @@ async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
     console.log("📤 Trade Payload:", JSON.stringify(payload, null, 2));
 
     try {
-        const response = await fetch('https://demo-openapi.spotware.com/connect/trading', {
+        const response = await fetch('https://openapi-demo.spotware.com/connect/trading', { // ✅ corrected URL
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
