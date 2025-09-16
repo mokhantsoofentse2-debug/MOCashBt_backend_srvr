@@ -22,14 +22,22 @@ const refreshToken = process.env.CTRADER_REFRESH_TOKEN;
 const clientId = process.env.CTRADER_CLIENT_ID;
 const clientSecret = process.env.CTRADER_CLIENT_SECRET;
 
-// ------------------- Account Setup from Environment -------------------
-let activeAccount = process.env.MO_TRADER_MAIN; // your account number
+// ------------------- Account Setup -------------------
+let activeAccount = process.env.MO_TRADER_MAIN;
 let accounts = [
     {
         accountNumber: activeAccount,
-        type: "REAL" // optional
+        type: "REAL"
     }
 ];
+
+// ------------------- API Endpoint Setup -------------------
+const USE_DEMO_API = process.env.USE_DEMO_API === 'true'; // set to "true" in Render if using demo
+const CTRADER_API_URL = USE_DEMO_API
+    ? 'https://openapi-demo.spotware.com/connect/trading'
+    : 'https://openapi.spotware.com/connect/trading';
+
+console.log(`🌐 Using cTrader API URL: ${CTRADER_API_URL}`);
 
 // ------------------- Functions -------------------
 async function refreshAccessToken() {
@@ -84,7 +92,7 @@ async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
     console.log("📤 Trade Payload:", JSON.stringify(payload, null, 2));
 
     try {
-        const response = await fetch('https://openapi-demo.spotware.com/connect/trading', { // ✅ corrected URL
+        const response = await fetch(CTRADER_API_URL, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
@@ -99,7 +107,7 @@ async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
             console.log("🔄 Token expired, refreshing and retrying trade...");
             const refreshed = await refreshAccessToken();
             if (refreshed) {
-                return placeTrade(account, symbol, volume, side); // retry trade
+                return placeTrade(account, symbol, volume, side);
             }
         }
 
@@ -109,7 +117,8 @@ async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
             console.log(`✅ Trade success for ${account.accountNumber}:`, data);
         }
     } catch (err) {
-        console.error(`❌ Trade error for ${account.accountNumber}:`, err.message);
+        console.error(`❌ Trade error for ${account.accountNumber}: ${err.message}`);
+        console.error("⚠️ Possible network/DNS issue. Check if the server can resolve the cTrader API host.");
     }
 }
 
@@ -130,6 +139,8 @@ app.post('/start', async (req, res) => {
             console.log("⚠️ No matching account found for activeAccount number:", activeAccount);
             console.log("📄 Current accounts:", accounts);
         }
+    } else if (!symbols.length) {
+        console.log("⚠️ No symbols set. Use /set_symbols before starting the bot.");
     }
 
     res.json({ success: true });
