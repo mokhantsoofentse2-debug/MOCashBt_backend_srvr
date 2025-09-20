@@ -1,195 +1,147 @@
-const express = require('express');
-const cors = require('cors');
-const fetch = require('node-fetch');
-const dns = require('dns').promises;
+import express from 'express';
+import fetch from 'node-fetch';
+import bodyParser from 'body-parser';
+import cors from 'cors';
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.CT_API_KEY;
+const ACCOUNT_ID = process.env.CT_ACCOUNT_ID;
+const BASE_URL = 'https://openapi.spotware.com/connect/trading';
 
-app.use(cors({ origin: '*' }));
-app.use(express.json());
+app.use(cors());
+app.use(bodyParser.json());
 
-// ------------------- In-Memory State -------------------
 let botStatus = false;
-let dailyPL = 0;
-let activeTrades = 0;
-let winRate = 0;
-let breakLevel = 0;
 let accounts = [];
-let activeAccount = '';
-let symbols = [];
-let fullMargin = false;
+let activeAccount = null;
 
-// ------------------- Token Management -------------------
-let accessToken = process.env.CTRADER_ACCESS_TOKEN;
-const refreshToken = process.env.CTRADER_REFRESH_TOKEN;
-const clientId = process.env.CTRADER_CLIENT_ID;
-const clientSecret = process.env.CTRADER_CLIENT_SECRET;
+// ---- TRADING ENGINE STATE ----
+let openTrades = []; // store open trades with type (outer/inner), SL, entry etc.
 
-// Cache IP to avoid resolving on every request
-let cachedIP = null;
-
-async function resolveSpotwareIP() {
-    try {
-        if (cachedIP) return cachedIP; // use cached value
-        const res = await dns.lookup("openapi.spotware.com");
-        cachedIP = res.address;
-        console.log(`🌐 Resolved openapi.spotware.com to ${cachedIP}`);
-        return cachedIP;
-    } catch (err) {
-        console.error("❌ Failed to resolve openapi.spotware.com:", err.message);
-        return null;
-    }
-}
-
-async function refreshAccessToken() {
-    if (!refreshToken || !clientId || !clientSecret) {
-        console.error("❌ Missing refresh token or client credentials in environment variables.");
-        return false;
-    }
-
-    console.log("🔄 Refreshing cTrader access token...");
-    try {
-        const response = await fetch("https://api.spotware.com/connect/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-                grant_type: "refresh_token",
-                refresh_token: refreshToken,
-                client_id: clientId,
-                client_secret: clientSecret
-            })
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-            console.error("❌ Failed to refresh token:", data);
-            return false;
-        }
-
-        accessToken = data.access_token;
-        console.log("✅ Access token refreshed successfully!");
-        return true;
-    } catch (err) {
-        console.error("❌ Error refreshing token:", err.message);
-        return false;
-    }
-}
-
-// ------------------- Utility: Place Trade -------------------
-async function placeTrade(account, symbol, volume = 1000, side = 'BUY') {
-    if (!accessToken) {
-        console.error("❌ No access token available, attempting refresh...");
-        const refreshed = await refreshAccessToken();
-        if (!refreshed) return;
-    }
-
-    const payload = {
-        accountId: account.accountNumber,
-        symbol,
-        volume,
-        side,
-        type: 'MARKET'
+// ---- NEW HELPER: Outer & Inner Trade Handling ----
+function placeOuterStructureTrade(setup) {
+    const trade = {
+        id: Date.now(),
+        type: 'outer',
+        entry: setup.entry,
+        sl: setup.isBuy ? setup.low - setup.buffer : setup.high + setup.buffer,
+        tp: setup.target,
+        active: true,
+        candleCount: 0
     };
+    openTrades.push(trade);
+    return trade;
+}
 
-    console.log("📤 Trade Payload:", JSON.stringify(payload, null, 2));
+function placeInnerTrade(signal, parentSetup) {
+    const trade = {
+        id: Date.now(),
+        type: 'inner',
+        entry: signal.entry,
+        sl: signal.sl,
+        tp: signal.tp,
+        active: true,
+        candleCount: 0
+    };
+    openTrades.push(trade);
+    return trade;
+}
 
-    try {
-        const ip = await resolveSpotwareIP();
-        if (!ip) {
-            console.error("❌ Could not resolve IP, skipping trade.");
-            return;
-        }
+function updateTradesOnCandleClose() {
+    openTrades.forEach(trade => {
+        if (!trade.active) return;
 
-        const response = await fetch(`https://${ip}/connect/trading`, {
-            method: 'POST',
-            headers: {
-                'Host': 'openapi.spotware.com', // SNI / virtual host header
-                'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
+        trade.candleCount++;
 
-        const data = await response.json();
-
-        if (response.status === 401) {
-            console.log("🔄 Token expired, refreshing and retrying trade...");
-            const refreshed = await refreshAccessToken();
-            if (refreshed) {
-                return placeTrade(account, symbol, volume, side); // retry trade
+        if (trade.type === 'inner') {
+            if (trade.candleCount === 2) {
+                // move SL to breakeven after 2 candles
+                trade.sl = trade.entry;
+            }
+            if (trade.candleCount % 3 === 0) {
+                // trail SL every 3 candles to lock profits
+                trailInnerTradeSL(trade);
             }
         }
+    });
+}
 
-        if (!response.ok) {
-            console.error(`❌ Trade failed for ${account.accountNumber}:`, data);
+function trailInnerTradeSL(trade) {
+    // simplistic trailing logic — adjust SL closer to price
+    if (trade.tp && trade.entry) {
+        const direction = trade.tp > trade.entry ? 'buy' : 'sell';
+        if (direction === 'buy') {
+            trade.sl = Math.max(trade.sl, trade.entry + (trade.tp - trade.entry) * 0.3);
         } else {
-            console.log(`✅ Trade success for ${account.accountNumber}:`, data);
+            trade.sl = Math.min(trade.sl, trade.entry - (trade.entry - trade.tp) * 0.3);
         }
-    } catch (err) {
-        console.error(`❌ Trade error for ${account.accountNumber}:`, err.message);
     }
 }
 
-// ------------------- Routes -------------------
+function checkTargetsAndClose() {
+    openTrades.forEach(trade => {
+        if (!trade.active) return;
+        // pseudo-price check
+        const currentPrice = getCurrentPrice(); // implement with your data feed
+        if (trade.type === 'outer' && (currentPrice >= trade.tp || currentPrice <= trade.tp)) {
+            // close outer trade, then keep SL trail for extra profits
+            trade.active = false;
+            lockExtraProfits();
+        }
+    });
+}
+
+function lockExtraProfits() {
+    // gather all SLs and hold for extended run
+    openTrades.forEach(t => {
+        if (t.type === 'inner') {
+            t.sl = t.sl; // keep as trailing profit lock
+        }
+    });
+}
+
+function getCurrentPrice() {
+    // Placeholder for actual price feed connection
+    return Math.random() * 100; // mock value
+}
+
+// ---- BOT CONTROL ENDPOINTS ----
 app.get('/status', (req, res) => {
-    res.json({ botStatus, dailyPL, activeTrades, winRate, breakLevel });
+    res.json({ botStatus, dailyPL: 0, activeTrades: openTrades.length, winRate: 0, breakLevel: 0 });
 });
 
-app.post('/start', async (req, res) => {
+app.post('/start', (req, res) => {
     botStatus = true;
-    console.log('🤖 Bot started');
-
-    if (activeAccount && symbols.length > 0) {
-        const account = accounts.find(acc => acc.name === activeAccount);
-        if (account) {
-            await placeTrade(account, symbols[0]);
-        } else {
-            console.log("⚠️ No matching account found for activeAccount:", activeAccount);
-        }
-    }
-
     res.json({ success: true });
 });
 
 app.post('/stop', (req, res) => {
     botStatus = false;
-    console.log('🛑 Bot stopped');
     res.json({ success: true });
 });
 
 app.post('/account_config', (req, res) => {
-    const { accounts: accs, activeAccount: active } = req.body;
-    if (accs) accounts = accs;
-    if (active) activeAccount = active;
-    console.log('✅ Active account set to:', activeAccount);
+    accounts = req.body.accounts;
+    activeAccount = req.body.activeAccount;
     res.json({ success: true });
 });
 
 app.post('/set_symbols', (req, res) => {
-    const { symbols: newSymbols } = req.body;
-    if (newSymbols) symbols = newSymbols;
-    console.log('📊 Symbols updated:', symbols);
+    // handle symbol updates
     res.json({ success: true });
 });
 
 app.post('/full_margin', (req, res) => {
-    fullMargin = !fullMargin;
-    console.log('⚡ Full margin mode:', fullMargin);
-    res.json({ success: true, fullMargin });
+    // toggle full margin mode
+    res.json({ success: true });
 });
 
-// ------------------- Simulation -------------------
+// ---- MAIN LOOP ----
 setInterval(() => {
-    if (botStatus) {
-        dailyPL += parseFloat((Math.random() * 10 - 5).toFixed(2));
-        activeTrades = Math.floor(Math.random() * 5);
-        winRate = Math.floor(Math.random() * 100);
-        breakLevel = Math.floor(Math.random() * 100);
-    }
+    if (!botStatus) return;
+    updateTradesOnCandleClose();
+    checkTargetsAndClose();
 }, 5000);
 
-// ------------------- Start Server -------------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Backend server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
